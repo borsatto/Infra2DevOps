@@ -1,0 +1,11 @@
+*.tfvars
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+*.retry
+*.log
+secrets.yml
+id_ed25519*
+*.pem
+*.key
