@@ -1,0 +1,93 @@
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "${ssh_public_key}"
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: "${hostname}\n"
+
+    - path: /etc/systemd/network/10-static.network
+      mode: 0644
+      contents:
+        inline: |
+          [Match]
+          Name=ens18 eth0
+
+          [Network]
+          Address=${ip_address}/${cidr}
+          Gateway=${gateway}
+          DNS=${dns}
+
+    - path: /etc/haproxy/haproxy.cfg
+      mode: 0644
+      contents:
+        inline: |
+          global
+              log stdout format raw local0
+              maxconn 4096
+
+          defaults
+              log     global
+              mode    tcp
+              option  tcplog
+              option  dontlognull
+              retries 3
+              timeout connect 5s
+              timeout client  50s
+              timeout server  50s
+
+          frontend k8s_api_frontend
+              bind *:6443
+              mode tcp
+              default_backend k8s_api_backend
+
+          backend k8s_api_backend
+              mode tcp
+              option tcp-check
+              balance roundrobin
+          %{ for name, ip in control_plane_ips ~}
+              server ${name} ${ip}:6443 check fall 3 rise 2
+          %{ endfor ~}
+
+          frontend stats
+              bind *:8404
+              mode http
+              stats enable
+              stats uri /stats
+              stats refresh 10s
+
+systemd:
+  units:
+    - name: docker.service
+      enabled: true
+
+    - name: haproxy.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=HAProxy Load Balancer for Kubernetes API
+        After=network-online.target docker.service
+        Requires=docker.service
+
+        [Service]
+        TimeoutStartSec=0
+        Restart=always
+        RestartSec=5s
+        ExecStartPre=-/usr/bin/docker rm -f haproxy-lb
+        ExecStartPre=/usr/bin/docker pull haproxy:lts-alpine
+        ExecStart=/usr/bin/docker run --name haproxy-lb --net=host \
+          -v /etc/haproxy/haproxy.cfg:/usr/local/etc/haproxy/haproxy.cfg:ro \
+          haproxy:lts-alpine
+        ExecStop=/usr/bin/docker stop haproxy-lb
+
+        [Install]
+        WantedBy=multi-user.target
+

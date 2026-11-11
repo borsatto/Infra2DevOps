@@ -1,0 +1,48 @@
+---
+# HA Kubernetes API Endpoint (Flatcar VM k8s-lb01 running HAProxy)
+control_plane_endpoint: "192.168.1.100:6443"
+
+# Internal Pod & Service CIDRs (non-overlapping with physical LAN 192.168.1.0/24)
+pod_network_cidr: "10.244.0.0/16"
+service_cidr: "10.96.0.0/12"
+
+# Project Calico CNI version
+calico_version: "v3.28.1"
+
+# Domain dedicated to Proof-of-Concept workloads (Cloudflare Tunnel)
+poc_domain: "devopsclub.io"
+
+# Helm (installed as a binary in /opt/bin on Control Planes; Flatcar has no apt/yum)
+helm_version: "v3.16.2"
+
+# MetalLB (L2 mode): provides LoadBalancer IPs on the LAN for the cluster
+metallb_chart_version: "0.14.9"
+metallb_namespace: "metallb-system"
+metallb_pool_name: "lab-pool"
+metallb_pool_range: "192.168.1.200-192.168.1.220"
+
+# ingress-nginx (LoadBalancer Service, IP assigned by MetalLB)
+ingress_nginx_chart_version: "4.11.3"
+ingress_nginx_namespace: "ingress-nginx"
+
+# Proxmox CSI Plugin: PVCs become native Proxmox disks (LVM-thin fast-lvm)
+proxmox_csi_chart_version: "0.3.12"
+proxmox_csi_namespace: "csi-proxmox"
+proxmox_api_url: "https://192.168.1.180:8006/api2/json"
+proxmox_region: "lab"
+proxmox_node_name: "pve"
+proxmox_csi_storage: "fast-lvm"
+proxmox_csi_storageclass: "proxmox-fast"
+
+# SeaweedFS: in-cluster S3 backend for Velero
+seaweedfs_chart_version: "4.0.0"
+seaweedfs_namespace: "seaweedfs"
+seaweedfs_volume_size: "200Gi"
+velero_bucket: "velero"
+
+# Velero + Kopia (volume backups via node-agent)
+velero_chart_version: "7.2.1"
+velero_namespace: "velero"
+velero_aws_plugin_version: "v1.10.1"
+velero_schedule_cron: "0 2 * * *"
+velero_schedule_ttl: "168h"

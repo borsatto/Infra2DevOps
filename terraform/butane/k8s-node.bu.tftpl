@@ -1,0 +1,99 @@
+variant: flatcar
+version: 1.1.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys:
+        - "${ssh_public_key}"
+
+storage:
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: "${hostname}\n"
+
+    - path: /etc/systemd/network/10-static.network
+      mode: 0644
+      contents:
+        inline: |
+          [Match]
+          Name=ens18 eth0
+
+          [Network]
+          Address=${ip_address}/${cidr}
+          Gateway=${gateway}
+          DNS=${dns}
+
+    - path: /etc/modules-load.d/k8s.conf
+      mode: 0644
+      contents:
+        inline: |
+          overlay
+          br_netfilter
+          nfs
+
+    - path: /etc/sysctl.d/99-k8s-cri.conf
+      mode: 0644
+      contents:
+        inline: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+
+systemd:
+  units:
+    - name: install-k8s-sysext.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Download and activate Flatcar Kubernetes systemd-sysext (${k8s_sysext_version})
+        After=network-online.target
+        Wants=network-online.target
+        Before=kubelet.service
+        ConditionPathExists=!/etc/extensions/kubernetes.raw
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStartPre=/usr/bin/mkdir -p /opt/extensions/kubernetes /etc/extensions
+        ExecStart=/usr/bin/curl -fsSL --retry 5 --retry-delay 3 -o /opt/extensions/kubernetes/kubernetes-${k8s_sysext_version}-x86-64.raw https://extensions.flatcar.org/extensions/kubernetes-${k8s_sysext_version}-x86-64.raw
+        ExecStartPost=/usr/bin/ln -sf /opt/extensions/kubernetes/kubernetes-${k8s_sysext_version}-x86-64.raw /etc/extensions/kubernetes.raw
+        ExecStartPost=/usr/bin/systemd-sysext refresh
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: install-python.service
+      enabled: true
+      contents: |
+        [Unit]
+        Description=Install portable PyPy3 in /opt/bin/python3 for Ansible
+        After=network-online.target
+        Wants=network-online.target
+        ConditionPathExists=!/opt/bin/python3
+
+        [Service]
+        Type=oneshot
+        RemainAfterExit=yes
+        ExecStartPre=/usr/bin/mkdir -p /opt/bin /opt/pypy3
+        ExecStart=/usr/bin/sh -c "curl -fsSL --retry 5 --retry-delay 3 https://downloads.python.org/pypy/pypy3.10-v7.3.17-linux64.tar.bz2 | tar -xjf - -C /opt/pypy3 --strip-components=1"
+        ExecStartPost=/usr/bin/ln -sf /opt/pypy3/bin/pypy3 /opt/bin/python3
+
+        [Install]
+        WantedBy=multi-user.target
+
+    - name: containerd.service
+      enabled: true
+
+    - name: kubelet.service
+      enabled: true
+      dropins:
+        - name: 10-flatcar.conf
+          contents: |
+            [Unit]
+            After=containerd.service install-k8s-sysext.service
+            Requires=containerd.service install-k8s-sysext.service
+
+

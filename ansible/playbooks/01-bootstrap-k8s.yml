@@ -1,0 +1,436 @@
+---
+- name: 1. Validate Flatcar Container Linux node readiness and systemd-sysext extensions
+  hosts: k8s_cluster
+  become: true
+  vars_files:
+    - ../vars/lab.yml
+  tasks:
+    - name: Ensure systemd-sysext is refreshed
+      ansible.builtin.command: systemd-sysext refresh
+      changed_when: false
+
+    - name: Check kubeadm version installed via sysext
+      ansible.builtin.command: kubeadm version -o short
+      register: kubeadm_ver
+      changed_when: false
+
+    - name: Ensure containerd is active
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+        enabled: true
+
+- name: 2. Initialize the first Control Plane (k8s-cp01)
+  hosts: control_plane_init
+  become: true
+  vars_files:
+    - ../vars/lab.yml
+  tasks:
+    - name: Check if cluster is already initialized on k8s-cp01
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: k8s_admin_conf
+
+    - name: Run kubeadm init with Control Plane Endpoint (HAProxy)
+      ansible.builtin.command: >
+        kubeadm init
+        --control-plane-endpoint="{{ control_plane_endpoint }}"
+        --upload-certs
+        --pod-network-cidr="{{ pod_network_cidr }}"
+        --service-cidr="{{ service_cidr }}"
+      when: not k8s_admin_conf.stat.exists
+
+    - name: Create .kube directory for user core
+      ansible.builtin.file:
+        path: /home/core/.kube
+        state: directory
+        owner: core
+        group: core
+        mode: "0755"
+
+    - name: Copy admin.conf to /home/core/.kube/config
+      ansible.builtin.copy:
+        src: /etc/kubernetes/admin.conf
+        dest: /home/core/.kube/config
+        remote_src: true
+        owner: core
+        group: core
+        mode: "0600"
+
+    - name: Install Project Calico CNI operator (Server-Side Apply for CRDs > 256KB)
+      become: false
+      ansible.builtin.command: >
+        kubectl apply --server-side --force-conflicts -f https://raw.githubusercontent.com/projectcalico/calico/{{ calico_version }}/manifests/tigera-operator.yaml
+      changed_when: false
+
+    - name: Configure Project Calico Installation with Pod CIDR ({{ pod_network_cidr }})
+      become: false
+      ansible.builtin.shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: operator.tigera.io/v1
+        kind: Installation
+        metadata:
+          name: default
+        spec:
+          calicoNetwork:
+            ipPools:
+              - name: default-ipv4-ippool
+                blockSize: 26
+                cidr: {{ pod_network_cidr }}
+                encapsulation: VXLANCrossSubnet
+                natOutgoing: Enabled
+                nodeSelector: all()
+        ---
+        apiVersion: operator.tigera.io/v1
+        kind: APIServer
+        metadata:
+          name: default
+        spec: {}
+        EOF
+      changed_when: false
+
+    - name: Generate certificate-key for joining secondary Control Planes
+      ansible.builtin.command: kubeadm init phase upload-certs --upload-certs
+      register: cert_key_out
+      changed_when: false
+
+    - name: Generate cluster join command
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_cmd_out
+      changed_when: false
+
+    - name: Store join facts for remaining nodes
+      ansible.builtin.set_fact:
+        k8s_join_command: "{{ join_cmd_out.stdout }}"
+        k8s_cert_key: "{{ cert_key_out.stdout_lines[-1] }}"
+
+- name: 3. Join secondary Control Planes (k8s-cp02 and k8s-cp03) in High Availability
+  hosts: control_plane_join
+  become: true
+  tasks:
+    - name: Check if Control Plane has already joined the cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: cp_kubelet_conf
+
+    - name: Run kubeadm join as Control Plane
+      ansible.builtin.command: >
+        {{ hostvars['k8s-cp01'].k8s_join_command }}
+        --control-plane
+        --certificate-key {{ hostvars['k8s-cp01'].k8s_cert_key }}
+      when: not cp_kubelet_conf.stat.exists
+
+- name: 4. Join Workers (k8s-worker01, k8s-worker02, and k8s-worker03)
+  hosts: workers
+  become: true
+  tasks:
+    - name: Check if Worker has already joined the cluster
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: worker_kubelet_conf
+
+    - name: Run kubeadm join as Worker
+      ansible.builtin.command: "{{ hostvars['k8s-cp01'].k8s_join_command }}"
+      when: not worker_kubelet_conf.stat.exists
+
+- name: 5. Helm, MetalLB, and Ingress Controller (via Helm on k8s-cp01)
+  hosts: control_plane_init
+  vars_files:
+    - ../vars/lab.yml
+  environment:
+    KUBECONFIG: /home/core/.kube/config
+    PATH: "/opt/bin:{{ ansible_facts['env']['PATH'] }}"
+  tasks:
+    - name: Check if Helm is already installed
+      ansible.builtin.stat:
+        path: /opt/bin/helm
+      register: helm_bin
+
+    - name: Wait for all cluster nodes to reach Ready state (Calico CNI active)
+      ansible.builtin.command: kubectl wait --for=condition=Ready nodes --all --timeout=300s
+      changed_when: false
+
+    - name: Install Helm in /opt/bin (official binary)
+      become: true
+      ansible.builtin.shell: |
+        set -e
+        mkdir -p /opt/bin
+        curl -fsSL https://get.helm.sh/helm-{{ helm_version }}-linux-amd64.tar.gz | tar -xz -C /tmp
+        install -m 0755 /tmp/linux-amd64/helm /opt/bin/helm
+        rm -rf /tmp/linux-amd64
+      when: not helm_bin.stat.exists
+
+    - name: Add Helm repositories (MetalLB and ingress-nginx)
+      ansible.builtin.shell: |
+        helm repo add metallb https://metallb.github.io/metallb --force-update
+        helm repo add ingress-nginx https://kubernetes.github.io/ingress-nginx --force-update
+        helm repo update
+      changed_when: false
+
+    - name: Install MetalLB
+      ansible.builtin.command: >
+        helm upgrade --install metallb metallb/metallb
+        --version {{ metallb_chart_version }}
+        --namespace {{ metallb_namespace }} --create-namespace
+        --wait --timeout 5m
+
+    - name: Configure MetalLB IPAddressPool and L2Advertisement
+      ansible.builtin.shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: metallb.io/v1beta1
+        kind: IPAddressPool
+        metadata:
+          name: {{ metallb_pool_name }}
+          namespace: {{ metallb_namespace }}
+        spec:
+          addresses:
+            - {{ metallb_pool_range }}
+        ---
+        apiVersion: metallb.io/v1beta1
+        kind: L2Advertisement
+        metadata:
+          name: {{ metallb_pool_name }}
+          namespace: {{ metallb_namespace }}
+        spec:
+          ipAddressPools:
+            - {{ metallb_pool_name }}
+        EOF
+      changed_when: false
+
+    - name: Install ingress-nginx (LoadBalancer Service with MetalLB IP)
+      ansible.builtin.command: >
+        helm upgrade --install ingress-nginx ingress-nginx/ingress-nginx
+        --version {{ ingress_nginx_chart_version }}
+        --namespace {{ ingress_nginx_namespace }} --create-namespace
+        --set controller.service.type=LoadBalancer
+        --wait --timeout 5m
+
+- name: 6. Proxmox CSI Plugin (PVCs as native Proxmox disks)
+  hosts: control_plane_init
+  vars_files:
+    - ../vars/lab.yml
+    - ../vars/secrets.yml
+  environment:
+    KUBECONFIG: /home/core/.kube/config
+    PATH: "/opt/bin:{{ ansible_facts['env']['PATH'] }}"
+  tasks:
+    - name: Label nodes with topology region and zone
+      ansible.builtin.shell: >
+        kubectl label nodes --all --overwrite
+        topology.kubernetes.io/region={{ proxmox_region }}
+        topology.kubernetes.io/zone={{ proxmox_node_name }}
+      changed_when: false
+
+    - name: Install Proxmox CSI Plugin
+      no_log: true
+      ansible.builtin.shell: |
+        helm upgrade --install proxmox-csi-plugin \
+          oci://ghcr.io/sergelogvinov/charts/proxmox-csi-plugin \
+          --version {{ proxmox_csi_chart_version }} \
+          --namespace {{ proxmox_csi_namespace }} --create-namespace \
+          --wait --timeout 5m -f - <<EOF
+        config:
+          clusters:
+            - url: {{ proxmox_api_url }}
+              insecure: true
+              token_id: "{{ proxmox_csi_token_id }}"
+              token_secret: "{{ proxmox_csi_token_secret }}"
+              region: {{ proxmox_region }}
+        storageClass:
+          - name: {{ proxmox_csi_storageclass }}
+            storage: {{ proxmox_csi_storage }}
+            reclaimPolicy: Delete
+            fstype: ext4
+            ssd: true
+            annotations:
+              storageclass.kubernetes.io/is-default-class: "true"
+        EOF
+
+- name: 7. SeaweedFS (in-cluster S3) and Velero with Kopia
+  hosts: control_plane_init
+  vars_files:
+    - ../vars/lab.yml
+    - ../vars/secrets.yml
+  environment:
+    KUBECONFIG: /home/core/.kube/config
+    PATH: "/opt/bin:{{ ansible_facts['env']['PATH'] }}"
+  tasks:
+    - name: Add Helm repositories (SeaweedFS and Velero)
+      ansible.builtin.shell: |
+        helm repo add seaweedfs https://seaweedfs.github.io/seaweedfs/helm --force-update
+        helm repo add vmware-tanzu https://vmware-tanzu.github.io/helm-charts --force-update
+        helm repo update
+      changed_when: false
+
+    - name: Create namespace and Secret with SeaweedFS S3 credentials
+      no_log: true
+      ansible.builtin.shell: |
+        kubectl create namespace {{ seaweedfs_namespace }} --dry-run=client -o yaml | kubectl apply -f -
+        kubectl apply -f - <<EOF
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: seaweedfs-s3-config
+          namespace: {{ seaweedfs_namespace }}
+        type: Opaque
+        stringData:
+          seaweedfs_s3_config: |
+            {
+              "identities": [
+                {
+                  "name": "velero",
+                  "credentials": [
+                    {
+                      "accessKey": "{{ seaweedfs_s3_access_key }}",
+                      "secretKey": "{{ seaweedfs_s3_secret_key }}"
+                    }
+                  ],
+                  "actions": ["Admin", "Read", "Write", "List", "Tagging"]
+                }
+              ]
+            }
+        EOF
+
+    - name: Install SeaweedFS (PVCs on Proxmox CSI StorageClass)
+      ansible.builtin.shell: |
+        helm upgrade --install seaweedfs seaweedfs/seaweedfs \
+          --version {{ seaweedfs_chart_version }} \
+          --namespace {{ seaweedfs_namespace }} \
+          --wait --timeout 10m -f - <<EOF
+        master:
+          replicas: 1
+          data:
+            type: persistentVolumeClaim
+            size: 5Gi
+            storageClass: {{ proxmox_csi_storageclass }}
+        volume:
+          replicas: 1
+          dataDirs:
+            - name: data
+              type: persistentVolumeClaim
+              size: {{ seaweedfs_volume_size }}
+              storageClass: {{ proxmox_csi_storageclass }}
+              maxVolumes: 0
+        filer:
+          replicas: 1
+          data:
+            type: persistentVolumeClaim
+            size: 10Gi
+            storageClass: {{ proxmox_csi_storageclass }}
+          s3:
+            enabled: true
+            port: 8333
+            enableAuth: true
+            existingConfigSecret: seaweedfs-s3-config
+            createBuckets:
+              - name: {{ velero_bucket }}
+                anonymousRead: false
+        EOF
+
+    - name: Install Velero with Kopia node-agent
+      no_log: true
+      ansible.builtin.shell: |
+        helm upgrade --install velero vmware-tanzu/velero \
+          --version {{ velero_chart_version }} \
+          --namespace {{ velero_namespace }} --create-namespace \
+          --wait --timeout 5m -f - <<EOF
+        upgradeCRDs: false
+        initContainers:
+          - name: velero-plugin-for-aws
+            image: velero/velero-plugin-for-aws:{{ velero_aws_plugin_version }}
+            volumeMounts:
+              - mountPath: /target
+                name: plugins
+        configuration:
+          uploaderType: kopia
+          defaultVolumesToFsBackup: true
+          backupStorageLocation:
+            - name: default
+              provider: aws
+              bucket: {{ velero_bucket }}
+              default: true
+              config:
+                region: us-east-1
+                s3ForcePathStyle: "true"
+                s3Url: http://seaweedfs-s3.{{ seaweedfs_namespace }}.svc.cluster.local:8333
+          volumeSnapshotLocation: []
+        deployNodeAgent: true
+        credentials:
+          useSecret: true
+          secretContents:
+            cloud: |
+              [default]
+              aws_access_key_id={{ seaweedfs_s3_access_key }}
+              aws_secret_access_key={{ seaweedfs_s3_secret_key }}
+        schedules:
+          daily:
+            schedule: "{{ velero_schedule_cron }}"
+            template:
+              ttl: "{{ velero_schedule_ttl }}"
+              excludedNamespaces:
+                - kube-system
+                - {{ seaweedfs_namespace }}
+        EOF
+
+- name: 8. Cloudflare Zero Trust Tunnel connector (cloudflared in High Availability)
+  hosts: control_plane_init
+  vars_files:
+    - ../vars/lab.yml
+    - ../vars/secrets.yml
+  environment:
+    KUBECONFIG: /home/core/.kube/config
+    PATH: "/opt/bin:{{ ansible_facts['env']['PATH'] }}"
+  tasks:
+    - name: Create cloudflared namespace and tunnel token Secret
+      no_log: true
+      when: cloudflare_tunnel_token is defined and cloudflare_tunnel_token | length > 0
+      ansible.builtin.shell: |
+        kubectl create namespace cloudflared --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create secret generic tunnel-credentials \
+          --namespace cloudflared \
+          --from-literal=token="{{ cloudflare_tunnel_token }}" \
+          --dry-run=client -o yaml | kubectl apply -f -
+
+    - name: Deploy cloudflared (2 replicas)
+      when: cloudflare_tunnel_token is defined and cloudflare_tunnel_token | length > 0
+      ansible.builtin.shell: |
+        kubectl apply -f - <<EOF
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: cloudflared
+          namespace: cloudflared
+        spec:
+          replicas: 2
+          selector:
+            matchLabels:
+              app: cloudflared
+          template:
+            metadata:
+              labels:
+                app: cloudflared
+            spec:
+              containers:
+                - name: cloudflared
+                  image: cloudflare/cloudflared:latest
+                  args:
+                    - tunnel
+                    - --no-autoupdate
+                    - --metrics
+                    - 0.0.0.0:2000
+                    - run
+                  env:
+                    - name: TUNNEL_TOKEN
+                      valueFrom:
+                        secretKeyRef:
+                          name: tunnel-credentials
+                          key: token
+                  livenessProbe:
+                    httpGet:
+                      path: /ready
+                      port: 2000
+                    failureThreshold: 1
+                    initialDelaySeconds: 10
+                    periodSeconds: 10
+        EOF
+      changed_when: false
