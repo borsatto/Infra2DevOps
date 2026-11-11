@@ -1,0 +1,26 @@
+# ============================================================================
+# Exemplo de variáveis NÃO-SENSÍVEIS — Copie para terraform.tfvars (ignorado pelo Git)
+# SEGREDOS (proxmox_api_token e cloudflare_api_token) NUNCA ficam neste arquivo!
+# Eles são carregados apenas em memória RAM via ./unlock-env.ps1 (TF_VAR_*).
+# ============================================================================
+
+proxmox_endpoint = "https://192.168.1.180:8006/"
+proxmox_node     = "pve"
+proxmox_ssh_user = "terraform"
+
+snippets_datastore    = "local"
+vm_disk_datastore     = "fast-lvm"
+flatcar_template_vmid = 9000
+
+network_prefix  = "192.168.1"
+network_cidr    = 24
+network_gateway = "192.168.1.1"
+network_dns     = "192.168.1.4"
+
+ssh_public_key = "ssh-ed25519 AAAA... andre@homelab"
+
+# Cloudflare Tunnel & DNS (devopsclub.io) — apenas IDs (o token entra via TF_VAR_cloudflare_api_token)
+enable_cloudflare_tunnel = true
+cloudflare_account_id    = "SEU_CLOUDFLARE_ACCOUNT_ID"
+cloudflare_zone_id       = "SEU_CLOUDFLARE_ZONE_ID_DEVOPSCLUB_IO"
+cloudflare_domain        = "devopsclub.io"
