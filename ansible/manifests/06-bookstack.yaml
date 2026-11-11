@@ -118,7 +118,7 @@ spec:
     spec:
       containers:
         - name: bookstack
-          image: lscr.io/linuxserver/bookstack:latest
+          image: harbor.devopsclub.io/devops/bookstack:latest
           env:
             - name: PUID
               value: "1000"
@@ -193,4 +193,3 @@ spec:
                 name: bookstack
                 port:
                   number: 80
-

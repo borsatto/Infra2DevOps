@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: uptime-kuma
-          image: louislam/uptime-kuma:1
+          image: harbor.devopsclub.io/devops/uptime-kuma:1
           ports:
             - containerPort: 3001
           volumeMounts:
@@ -83,4 +83,3 @@ spec:
                 name: uptime-kuma
                 port:
                   number: 80
-

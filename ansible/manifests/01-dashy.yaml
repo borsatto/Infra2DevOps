@@ -90,7 +90,7 @@ spec:
     spec:
       containers:
         - name: dashy
-          image: lissy93/dashy:latest
+          image: harbor.devopsclub.io/devops/dashy:latest
           ports:
             - containerPort: 8080
           volumeMounts:
@@ -139,4 +139,3 @@ spec:
                 name: dashy
                 port:
                   number: 80
-

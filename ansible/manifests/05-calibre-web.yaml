@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: calibre-web
-          image: lscr.io/linuxserver/calibre-web:latest
+          image: harbor.devopsclub.io/devops/calibre-web:latest
           env:
             - name: PUID
               value: "1000"
@@ -96,4 +96,3 @@ spec:
                 name: calibre-web
                 port:
                   number: 80
-

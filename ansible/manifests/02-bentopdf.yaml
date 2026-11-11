@@ -20,7 +20,7 @@ spec:
     spec:
       containers:
         - name: bentopdf
-          image: bentopdf/bentopdf:latest
+          image: harbor.devopsclub.io/devops/bentopdf:latest
           ports:
             - containerPort: 8080
           resources:
@@ -81,4 +81,3 @@ spec:
                 name: bentopdf
                 port:
                   number: 80
-

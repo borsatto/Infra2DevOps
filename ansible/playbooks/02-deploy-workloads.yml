@@ -55,6 +55,71 @@
       changed_when: false
 
     # =========================================================================
+    # 4. Harbor (Enterprise Container Registry & Security Scanner at harbor.devopsclub.io)
+    # =========================================================================
+    - name: Add Harbor Helm repository
+      ansible.builtin.shell: |
+        helm repo add harbor https://helm.goharbor.io --force-update
+        helm repo update
+      changed_when: false
+
+    - name: "Install Harbor Enterprise Registry (harbor.devopsclub.io)"
+      no_log: true
+      ansible.builtin.shell: |
+        helm upgrade --install harbor harbor/harbor \
+          --namespace harbor --create-namespace \
+          --wait --timeout 10m -f - <<EOF
+        expose:
+          type: ingress
+          tls:
+            enabled: false
+          ingress:
+            hosts:
+              core: harbor.devopsclub.io
+            className: nginx
+            annotations:
+              ingress.kubernetes.io/proxy-body-size: "0"
+              nginx.ingress.kubernetes.io/proxy-body-size: "0"
+        externalURL: https://harbor.devopsclub.io
+        harborAdminPassword: "{{ seaweedfs_s3_secret_key }}"
+        persistence:
+          persistentVolumeClaim:
+            registry:
+              storageClass: "{{ proxmox_csi_storageclass }}"
+              size: 20Gi
+            database:
+              storageClass: "{{ proxmox_csi_storageclass }}"
+              size: 5Gi
+            redis:
+              storageClass: "{{ proxmox_csi_storageclass }}"
+              size: 2Gi
+            trivy:
+              storageClass: "{{ proxmox_csi_storageclass }}"
+              size: 5Gi
+        trivy:
+          enabled: true
+        EOF
+      changed_when: false
+
+    - name: Seed Harbor (create public devops project for cluster image storage)
+      ansible.builtin.shell: |
+        set -e
+        # Wait for internal Harbor API to respond
+        for i in $(seq 1 30); do
+          if kubectl exec -n harbor deployment/harbor-core -- curl -k -fsS http://127.0.0.1:8080/api/v2.0/systeminfo >/dev/null 2>&1; then
+            break
+          fi
+          sleep 3
+        done
+
+        # Create public project devops if not already present
+        kubectl exec -i -n harbor deployment/harbor-core -- curl -s -u "admin:{{ seaweedfs_s3_secret_key }}" \
+          -X POST "http://127.0.0.1:8080/api/v2.0/projects" \
+          -H "Content-Type: application/json" \
+          -d '{"project_name": "devops", "metadata": {"public": "true"}}' 2>/dev/null || true
+      changed_when: false
+
+    # =========================================================================
     # 5. Calibre-Web + Public-Domain E-book Seeding (https://books.devopsclub.io)
     # =========================================================================
     - name: "Deploy Calibre-Web with proxmox-fast PVC (books.devopsclub.io)"

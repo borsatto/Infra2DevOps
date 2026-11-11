@@ -1,0 +1,42 @@
+# ============================================================================
+# Harbor Enterprise Container Registry & Security Scanner (Helm Values)
+# Endpoint: https://harbor.devopsclub.io
+# ============================================================================
+expose:
+  type: ingress
+  tls:
+    enabled: false
+  ingress:
+    hosts:
+      core: harbor.devopsclub.io
+    className: nginx
+    annotations:
+      ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/proxy-body-size: "0"
+
+externalURL: https://harbor.devopsclub.io
+
+persistence:
+  enabled: true
+  resourcePolicy: "keep"
+  persistentVolumeClaim:
+    registry:
+      storageClass: "proxmox-fast"
+      accessMode: ReadWriteOnce
+      size: 20Gi
+    database:
+      storageClass: "proxmox-fast"
+      accessMode: ReadWriteOnce
+      size: 5Gi
+    redis:
+      storageClass: "proxmox-fast"
+      accessMode: ReadWriteOnce
+      size: 2Gi
+    trivy:
+      storageClass: "proxmox-fast"
+      accessMode: ReadWriteOnce
+      size: 5Gi
+
+trivy:
+  enabled: true
+
