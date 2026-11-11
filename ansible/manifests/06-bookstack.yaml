@@ -1,0 +1,196 @@
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: bookstack
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bookstack-db-pvc
+  namespace: bookstack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: proxmox-fast
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: bookstack-data-pvc
+  namespace: bookstack
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: proxmox-fast
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bookstack-mariadb
+  namespace: bookstack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bookstack-mariadb
+  template:
+    metadata:
+      labels:
+        app: bookstack-mariadb
+    spec:
+      containers:
+        - name: mariadb
+          image: harbor.devopsclub.io/devops/mariadb:latest
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/Sao_Paulo"
+            - name: MYSQL_DATABASE
+              value: "bookstackapp"
+            - name: MYSQL_USER
+              value: "bookstack"
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bookstack-secrets
+                  key: db-password
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bookstack-secrets
+                  key: db-root-password
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: db-data
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: db-data
+          persistentVolumeClaim:
+            claimName: bookstack-db-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bookstack-mariadb
+  namespace: bookstack
+spec:
+  selector:
+    app: bookstack-mariadb
+  ports:
+    - port: 3306
+      targetPort: 3306
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bookstack
+  namespace: bookstack
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: bookstack
+  template:
+    metadata:
+      labels:
+        app: bookstack
+    spec:
+      containers:
+        - name: bookstack
+          image: lscr.io/linuxserver/bookstack:latest
+          env:
+            - name: PUID
+              value: "1000"
+            - name: PGID
+              value: "1000"
+            - name: TZ
+              value: "America/Sao_Paulo"
+            - name: APP_URL
+              value: "https://wiki.devopsclub.io"
+            - name: APP_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: bookstack-secrets
+                  key: app-key
+            - name: DB_HOST
+              value: "bookstack-mariadb"
+            - name: DB_PORT
+              value: "3306"
+            - name: DB_USERNAME
+              value: "bookstack"
+            - name: DB_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: bookstack-secrets
+                  key: db-password
+            - name: DB_DATABASE
+              value: "bookstackapp"
+          ports:
+            - containerPort: 80
+          volumeMounts:
+            - name: app-data
+              mountPath: /config
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+      volumes:
+        - name: app-data
+          persistentVolumeClaim:
+            claimName: bookstack-data-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bookstack
+  namespace: bookstack
+spec:
+  selector:
+    app: bookstack
+  ports:
+    - port: 80
+      targetPort: 80
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: bookstack
+  namespace: bookstack
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: wiki.devopsclub.io
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: bookstack
+                port:
+                  number: 80
+

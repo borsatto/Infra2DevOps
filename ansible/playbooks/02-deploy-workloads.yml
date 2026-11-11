@@ -1,0 +1,268 @@
+---
+- name: "1. Deploy and Seed PoC Workloads (*.devopsclub.io) and Observability"
+  hosts: control_plane_init
+  vars_files:
+    - ../vars/lab.yml
+    - ../vars/secrets.yml
+  environment:
+    KUBECONFIG: /home/core/.kube/config
+    PATH: "/opt/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  tasks:
+    - name: Create manifests directory at /home/core/manifests on k8s-cp01
+      ansible.builtin.file:
+        path: /home/core/manifests
+        state: directory
+        owner: core
+        group: core
+        mode: "0755"
+
+    - name: Copy PoC Kubernetes manifests to k8s-cp01
+      ansible.builtin.copy:
+        src: "{{ item }}"
+        dest: /home/core/manifests/
+        owner: core
+        group: core
+        mode: "0644"
+      with_fileglob:
+        - "../manifests/*.yaml"
+
+    - name: Install metrics-server (required for BentoPDF HPA and kubectl top)
+      ansible.builtin.shell: |
+        kubectl apply -f https://github.com/kubernetes-sigs/metrics-server/releases/latest/download/components.yaml
+        kubectl patch deployment metrics-server -n kube-system --type='json' \
+          -p='[{"op": "add", "path": "/spec/template/spec/containers/0/args/-", "value": "--kubelet-insecure-tls"}]' || true
+      changed_when: false
+
+    # =========================================================================
+    # 1. Dashy (https://dash.devopsclub.io)
+    # =========================================================================
+    - name: "Deploy Dashy (dash.devopsclub.io)"
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/01-dashy.yaml
+      changed_when: false
+
+    # =========================================================================
+    # 2. BentoPDF + HPA (https://pdf.devopsclub.io)
+    # =========================================================================
+    - name: "Deploy Stateless BentoPDF + HPA (pdf.devopsclub.io)"
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/02-bentopdf.yaml
+      changed_when: false
+
+    # =========================================================================
+    # 3. Uptime Kuma (https://status.devopsclub.io)
+    # =========================================================================
+    - name: "Deploy Uptime Kuma with proxmox-fast PVC (status.devopsclub.io)"
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/03-uptime-kuma.yaml
+      changed_when: false
+
+    # =========================================================================
+    # 5. Calibre-Web + Public-Domain E-book Seeding (https://books.devopsclub.io)
+    # =========================================================================
+    - name: "Deploy Calibre-Web with proxmox-fast PVC (books.devopsclub.io)"
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/05-calibre-web.yaml
+      changed_when: false
+
+    - name: Wait for Calibre-Web Pod to reach Ready state
+      ansible.builtin.command: >
+        kubectl rollout status deployment/calibre-web -n calibre-web --timeout=300s
+      changed_when: false
+
+    - name: Seed Calibre-Web library with 4 classic public-domain books (.epub)
+      ansible.builtin.shell: |
+        set -e
+        POD=$(kubectl get pod -n calibre-web -l app=calibre-web -o jsonpath='{.items[0].metadata.name}')
+        # Wait for initial /config/app.db creation by Calibre-Web
+        for i in $(seq 1 30); do
+          if kubectl exec -n calibre-web "$POD" -- test -f /config/app.db; then
+            break
+          fi
+          sleep 2
+        done
+        kubectl exec -i -n calibre-web "$POD" -- python3 - << 'PYEOF'
+        import os, sys, sqlite3, urllib.request, datetime
+        sys.path.insert(0, "/app/calibre-web")
+        from sqlalchemy import create_engine
+        from cps import db
+
+        books_dir = "/books"
+        os.makedirs(books_dir, exist_ok=True)
+        meta_path = os.path.join(books_dir, "metadata.db")
+
+        if not os.path.exists(meta_path):
+            eng = create_engine(f"sqlite:///{meta_path}")
+            conn = eng.connect()
+            conn.exec_driver_sql(f"ATTACH DATABASE '{meta_path}' AS calibre")
+            db.Base.metadata.create_all(conn)
+            conn.close()
+
+        catalog = [
+            (1, "The Art of War", "War, The Art of", "Sun Tzu", "Tzu, Sun", "https://www.gutenberg.org/ebooks/132.epub.noimages", "The Art of War - Sun Tzu"),
+            (2, "Dom Casmurro", "Dom Casmurro", "Machado de Assis", "Assis, Machado de", "https://www.gutenberg.org/ebooks/55752.epub.noimages", "Dom Casmurro - Machado de Assis"),
+            (3, "Memorias Postumas de Bras Cubas", "Memorias Postumas de Bras Cubas", "Machado de Assis", "Assis, Machado de", "https://www.gutenberg.org/ebooks/54829.epub.noimages", "Memorias Postumas de Bras Cubas - Machado de Assis"),
+            (4, "The Time Machine", "Time Machine, The", "H. G. Wells", "Wells, H. G.", "https://www.gutenberg.org/ebooks/35.epub.noimages", "The Time Machine - H. G. Wells"),
+        ]
+
+        con = sqlite3.connect(meta_path)
+        cur = con.cursor()
+        cur.execute("INSERT OR IGNORE INTO library_id (id, uuid) VALUES (1, '00000000-0000-0000-0000-000000000000')")
+        now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+
+        for bid, title, sort_t, author, author_sort, url, fname in catalog:
+            rel_dir = f"{author}/{title} ({bid})"
+            full_dir = os.path.join(books_dir, rel_dir)
+            os.makedirs(full_dir, exist_ok=True)
+            epub_path = os.path.join(full_dir, f"{fname}.epub")
+            if not os.path.exists(epub_path):
+                req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+                with urllib.request.urlopen(req, timeout=30) as r, open(epub_path, "wb") as f:
+                    f.write(r.read())
+            size = os.path.getsize(epub_path)
+
+            cur.execute("INSERT OR IGNORE INTO authors (id, name, sort, link) VALUES (?, ?, ?, '')", (bid, author, author_sort))
+            cur.execute("""
+                INSERT OR IGNORE INTO books (id, title, sort, author_sort, timestamp, pubdate, series_index, last_modified, path, has_cover, uuid)
+                VALUES (?, ?, ?, ?, ?, ?, 1.0, ?, ?, 0, ?)
+            """, (bid, title, sort_t, author_sort, now, now, now, rel_dir, f"00000000-0000-0000-0000-00000000000{bid}"))
+            cur.execute("INSERT OR IGNORE INTO books_authors_link (book, author) VALUES (?, ?)", (bid, bid))
+            cur.execute("INSERT OR IGNORE INTO data (id, book, format, uncompressed_size, name) VALUES (?, ?, 'EPUB', ?, ?)", (bid, bid, size, fname))
+
+        con.commit()
+        con.close()
+
+        # Configure /books path and anonymous browsing in Calibre-Web /config/app.db
+        app_db = "/config/app.db"
+        if os.path.exists(app_db):
+            acon = sqlite3.connect(app_db)
+            acon.execute("UPDATE settings SET config_calibre_dir='/books', config_anonbrowse=1")
+            acon.execute("UPDATE user SET role=38 WHERE name='Guest'")
+            acon.commit()
+            acon.close()
+        PYEOF
+        kubectl exec -n calibre-web "$POD" -- chown -R abc:abc /books /config || true
+        kubectl rollout restart deployment/calibre-web -n calibre-web
+        kubectl rollout status deployment/calibre-web -n calibre-web --timeout=180s
+      changed_when: false
+
+    # =========================================================================
+    # 6. BookStack + MariaDB + Wiki Seeding (https://wiki.devopsclub.io)
+    # =========================================================================
+    - name: Create bookstack namespace and Secret (APP_KEY + MariaDB passwords)
+      no_log: true
+      ansible.builtin.shell: |
+        kubectl create namespace bookstack --dry-run=client -o yaml | kubectl apply -f -
+        if ! kubectl get secret bookstack-secrets -n bookstack >/dev/null 2>&1; then
+          APP_KEY="base64:$(head -c 32 /dev/urandom | base64)"
+          kubectl create secret generic bookstack-secrets \
+            --namespace bookstack \
+            --from-literal=app-key="$APP_KEY" \
+            --from-literal=db-password="{{ seaweedfs_s3_secret_key }}" \
+            --from-literal=db-root-password="{{ seaweedfs_s3_secret_key }}"
+        fi
+
+    - name: "Deploy BookStack + MariaDB with proxmox-fast PVCs (wiki.devopsclub.io)"
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/06-bookstack.yaml
+      changed_when: false
+
+    - name: Wait for MariaDB and BookStack to reach Ready state
+      ansible.builtin.shell: |
+        kubectl rollout status deployment/bookstack-mariadb -n bookstack --timeout=300s
+        kubectl rollout status deployment/bookstack -n bookstack --timeout=300s
+      changed_when: false
+
+    - name: Seed BookStack Wiki with Architecture, Runbooks, and DR Books and Pages
+      ansible.builtin.shell: |
+        set -e
+        POD=$(kubectl get pod -n bookstack -l app=bookstack -o jsonpath='{.items[0].metadata.name}')
+        # Wait for initial Laravel migrations to finish
+        for i in $(seq 1 30); do
+          if kubectl exec -n bookstack "$POD" -- php -r 'require "/app/www/vendor/autoload.php"; $app = require_once "/app/www/bootstrap/app.php"; $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap(); echo \BookStack\Users\Models\User::count();' 2>/dev/null | grep -qE '^[1-9]'; then
+            break
+          fi
+          sleep 3
+        done
+
+        kubectl exec -i -n bookstack "$POD" -- php << 'PHPEOF'
+        <?php
+        require '/app/www/vendor/autoload.php';
+        $app = require_once '/app/www/bootstrap/app.php';
+        $app->make(Illuminate\Contracts\Console\Kernel::class)->bootstrap();
+
+        $admin = \BookStack\Users\Models\User::first();
+        auth()->login($admin);
+        setting()->put('app-public', 'true');
+        setting()->put('app-name', 'Infra 2 DevOps Wiki');
+
+        $bookRepo = app(\BookStack\Entities\Repos\BookRepo::class);
+        $pageRepo = app(\BookStack\Entities\Repos\PageRepo::class);
+
+        if (\BookStack\Entities\Models\Book::count() === 0) {
+            $b1 = $bookRepo->create([
+                'name' => '01. Cloud Native Architecture (Dell R630 + Flatcar + K8s)',
+                'description' => 'Technical documentation of the physical foundation, Proxmox VE 9.2, Flatcar Container Linux (CoreOS), and HA cluster topology.'
+            ]);
+            $p1 = $pageRepo->getNewDraftPage($b1);
+            $pageRepo->publishDraft($p1, [
+                'name' => 'Overview and HA Topology (7 Flatcar VMs)',
+                'markdown' => "# High Availability Cluster Topology\n\nThe **Infra 2 DevOps** cluster runs on a **Dell PowerEdge R630** server (2x Xeon E5-2697 v4 — 72 threads, 768 GB DDR4 ECC RAM) with **Proxmox VE 9.2** and a SAS SSD LVM-Thin pool (`fast-lvm`).\n\n## Cluster Nodes\n- `k8s-lb01` (`192.168.1.100`): HAProxy Load Balancer (`:6443`)\n- `k8s-cp01..03` (`192.168.1.101..103`): 3 HA Control Planes with stacked `etcd`\n- `k8s-worker01..03` (`192.168.1.111..113`): 3 Workers dedicated to workloads and storage\n\n## Platform Stack\n- **Immutable OS:** Flatcar Container Linux with `systemd-sysext` (`kubernetes-v1.31.13`)\n- **CNI:** Project Calico (`10.244.0.0/16`)\n- **Bare-Metal LoadBalancer:** MetalLB L2 (`192.168.1.200-192.168.1.220`) + `ingress-nginx`\n- **CSI Storage:** Proxmox CSI Plugin (`StorageClass: proxmox-fast`)\n- **Secure Exposure:** Cloudflare Zero Trust Tunnel (`*.devopsclub.io`)"
+            ]);
+
+            $b2 = $bookRepo->create([
+                'name' => '02. Operational Runbooks Catalog',
+                'description' => 'Standardized operational procedures (Day-0, Day-1, and Day-2) executed via Ansible / aborsatto/megabash.'
+            ]);
+            $p2 = $pageRepo->getNewDraftPage($b2);
+            $pageRepo->publishDraft($p2, [
+                'name' => 'Runbook Index and aborsatto/megabash Toolbox',
+                'markdown' => "# Operational Runbooks\n\nAll project automation can be executed natively on Linux/WSL2 or inside the **[`aborsatto/megabash`](https://hub.docker.com/r/aborsatto/megabash)** DevOps Toolbox container (Fedora 44 + PowerShell 7 + Terraform + Ansible + `kubectl` + `helm`).\n\n1. **Runbook 01:** Proxmox VE 9.2 preparation, least-privilege Role (`TerraformProv`), and restricted SSH user.\n2. **Runbook 02:** In-memory secrets (`unlock-env.ps1`), GitLab HTTP backend, and Cloudflare Zero Trust Tunnel.\n3. **Runbook 03:** Flatcar template (`VMID 9000`), two-phase Butane/Ignition transpilation, and `terraform apply`.\n4. **Runbook 04:** HA K8s Cluster bootstrap, Proxmox CSI, SeaweedFS, and Velero with Ansible.\n5. **Runbook 05:** Declarative deployment and automated seeding of PoC Workloads (`*.devopsclub.io`) and Observability."
+            ]);
+
+            $b3 = $bookRepo->create([
+                'name' => '03. Disaster Recovery & Chaos Engineering (Velero + Kopia)',
+                'description' => 'Immutable PVC backup procedures with Velero + Kopia to the SeaweedFS S3 backend and restore testing.'
+            ]);
+            $p3 = $pageRepo->getNewDraftPage($b3);
+            $pageRepo->publishDraft($p3, [
+                'name' => 'How to Run a Full Namespace Backup and Restore',
+                'markdown' => "# Disaster Recovery Playbook with Velero\n\nThe cluster performs automated daily backups at `02:00` using **Velero** with the **Kopia** `node-agent`, shipping PVC data (`proxmox-fast`) to the `velero` bucket on **SeaweedFS S3**.\n\n## 1. Create an On-Demand Backup\n```bash\nvelero backup create backup-bookstack --include-namespaces bookstack --wait\n```\n\n## 2. Simulate Disaster (Full Namespace and PVC Deletion)\n```bash\nkubectl delete namespace bookstack\n```\n\n## 3. Restore the Service in Seconds\n```bash\nvelero restore create restore-bookstack --from-backup backup-bookstack --wait\n```"
+            ]);
+        }
+        kubectl exec -n bookstack "$POD" -- chown -R abc:abc /app/www/storage /config || true
+      changed_when: false
+
+    # =========================================================================
+    # 7. Observability: Prometheus + Grafana (https://monitoring.devopsclub.io)
+    # =========================================================================
+    - name: Add prometheus-community Helm repository
+      ansible.builtin.shell: |
+        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts --force-update
+        helm repo update
+      changed_when: false
+
+    - name: "Install kube-prometheus-stack (Grafana at monitoring.devopsclub.io)"
+      no_log: true
+      ansible.builtin.shell: |
+        helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
+          --namespace monitoring --create-namespace \
+          --wait --timeout 10m -f - <<EOF
+        grafana:
+          adminPassword: "{{ seaweedfs_s3_secret_key }}"
+          grafana.ini:
+            auth.anonymous:
+              enabled: true
+              org_role: Viewer
+          ingress:
+            enabled: true
+            ingressClassName: nginx
+            hosts:
+              - monitoring.devopsclub.io
+        prometheus:
+          prometheusSpec:
+            retention: 7d
+            storageSpec:
+              volumeClaimTemplate:
+                spec:
+                  storageClassName: {{ proxmox_csi_storageclass }}
+                  accessModes: ["ReadWriteOnce"]
+                  resources:
+                    requests:
+                      storage: 20Gi
+        EOF
