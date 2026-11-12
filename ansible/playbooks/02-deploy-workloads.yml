@@ -34,28 +34,28 @@
       changed_when: false
 
     # =========================================================================
-    # 1. Dashy (https://dash.devopsclub.io)
+    # 1. Dashy (https://dash.corp.devopsclub.io)
     # =========================================================================
-    - name: "Deploy Dashy (dash.devopsclub.io)"
+    - name: "Deploy Dashy (dash.corp.devopsclub.io)"
       ansible.builtin.command: kubectl apply -f /home/core/manifests/01-dashy.yaml
       changed_when: false
 
     # =========================================================================
-    # 2. BentoPDF + HPA (https://pdf.devopsclub.io)
+    # 2. BentoPDF + HPA (https://pdf.corp.devopsclub.io)
     # =========================================================================
-    - name: "Deploy Stateless BentoPDF + HPA (pdf.devopsclub.io)"
+    - name: "Deploy Stateless BentoPDF + HPA (pdf.corp.devopsclub.io)"
       ansible.builtin.command: kubectl apply -f /home/core/manifests/02-bentopdf.yaml
       changed_when: false
 
     # =========================================================================
-    # 3. Uptime Kuma (https://status.devopsclub.io)
+    # 3. Uptime Kuma (https://status.corp.devopsclub.io)
     # =========================================================================
-    - name: "Deploy Uptime Kuma with proxmox-fast PVC (status.devopsclub.io)"
+    - name: "Deploy Uptime Kuma with proxmox-fast PVC (status.corp.devopsclub.io)"
       ansible.builtin.command: kubectl apply -f /home/core/manifests/03-uptime-kuma.yaml
       changed_when: false
 
     # =========================================================================
-    # 4. Harbor (Enterprise Container Registry & Security Scanner at harbor.devopsclub.io)
+    # 4. Harbor (Enterprise Container Registry & Security Scanner at harbor.corp.devopsclub.io)
     # =========================================================================
     - name: Add Harbor Helm repository
       ansible.builtin.shell: |
@@ -63,7 +63,7 @@
         helm repo update
       changed_when: false
 
-    - name: "Install Harbor Enterprise Registry (harbor.devopsclub.io)"
+    - name: "Install Harbor Enterprise Registry (harbor.corp.devopsclub.io)"
       no_log: true
       ansible.builtin.shell: |
         helm upgrade --install harbor harbor/harbor \
@@ -72,15 +72,19 @@
         expose:
           type: ingress
           tls:
-            enabled: false
+            enabled: true
+            certSource: secret
+            secret:
+              secretName: "corp-wildcard-tls"
           ingress:
             hosts:
-              core: harbor.devopsclub.io
+              core: harbor.corp.devopsclub.io
             className: nginx
             annotations:
               ingress.kubernetes.io/proxy-body-size: "0"
               nginx.ingress.kubernetes.io/proxy-body-size: "0"
-        externalURL: https://harbor.devopsclub.io
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+        externalURL: https://harbor.corp.devopsclub.io
         harborAdminPassword: "{{ seaweedfs_s3_secret_key }}"
         persistence:
           persistentVolumeClaim:
@@ -101,7 +105,8 @@
         EOF
       changed_when: false
 
-    - name: Seed Harbor (create public devops project for cluster image storage)
+    - name: Seed Harbor (create public devops project and configure Active Directory LDAP/RBAC)
+      no_log: true
       ansible.builtin.shell: |
         set -e
         # Wait for internal Harbor API to respond
@@ -117,6 +122,25 @@
           -X POST "http://127.0.0.1:8080/api/v2.0/projects" \
           -H "Content-Type: application/json" \
           -d '{"project_name": "devops", "metadata": {"public": "true"}}' 2>/dev/null || true
+
+        # Configure Active Directory LDAP authentication and group RBAC (GG-DevOps-Admins)
+        kubectl exec -i -n harbor deployment/harbor-core -- curl -s -u "admin:{{ seaweedfs_s3_secret_key }}" \
+          -X PUT "http://127.0.0.1:8080/api/v2.0/configurations" \
+          -H "Content-Type: application/json" \
+          -d '{
+            "auth_mode": "ldap_auth",
+            "ldap_url": "ldap://192.168.1.40:389",
+            "ldap_search_dn": "CN=svc-k8s-ldap,OU=ServiceAccounts,OU=DevOps,DC=corp,DC=devopsclub,DC=io",
+            "ldap_search_password": "{{ seaweedfs_s3_secret_key }}!",
+            "ldap_base_dn": "DC=corp,DC=devopsclub,DC=io",
+            "ldap_uid": "sAMAccountName",
+            "ldap_scope": 2,
+            "ldap_group_base_dn": "OU=Groups,OU=DevOps,DC=corp,DC=devopsclub,DC=io",
+            "ldap_group_search_filter": "(objectClass=group)",
+            "ldap_group_attribute_name": "cn",
+            "ldap_group_admin_dn": "CN=GG-DevOps-Admins,OU=Groups,OU=DevOps,DC=corp,DC=devopsclub,DC=io",
+            "ldap_group_search_scope": 2
+          }' 2>/dev/null || true
       changed_when: false
 
     # =========================================================================
@@ -210,7 +234,7 @@
     # =========================================================================
     # 6. BookStack + MariaDB + Wiki Seeding (https://wiki.devopsclub.io)
     # =========================================================================
-    - name: Create bookstack namespace and Secret (APP_KEY + MariaDB passwords)
+    - name: Create bookstack namespace and Secret (APP_KEY + MariaDB passwords + LDAP bind)
       no_log: true
       ansible.builtin.shell: |
         kubectl create namespace bookstack --dry-run=client -o yaml | kubectl apply -f -
@@ -220,7 +244,8 @@
             --namespace bookstack \
             --from-literal=app-key="$APP_KEY" \
             --from-literal=db-password="{{ seaweedfs_s3_secret_key }}" \
-            --from-literal=db-root-password="{{ seaweedfs_s3_secret_key }}"
+            --from-literal=db-root-password="{{ seaweedfs_s3_secret_key }}" \
+            --from-literal=ldap-bind-password="{{ seaweedfs_s3_secret_key }}!"
         fi
 
     - name: "Deploy BookStack + MariaDB with proxmox-fast PVCs (wiki.devopsclub.io)"
@@ -233,7 +258,7 @@
         kubectl rollout status deployment/bookstack -n bookstack --timeout=300s
       changed_when: false
 
-    - name: Seed BookStack Wiki with Architecture, Runbooks, and DR Books and Pages
+    - name: Seed BookStack Wiki with Books, Pages, and AD Role Mapping (GG-DevOps-Admins)
       ansible.builtin.shell: |
         set -e
         POD=$(kubectl get pod -n bookstack -l app=bookstack -o jsonpath='{.items[0].metadata.name}')
@@ -255,6 +280,7 @@
         auth()->login($admin);
         setting()->put('app-public', 'true');
         setting()->put('app-name', 'Infra 2 DevOps Wiki');
+        \BookStack\Users\Models\Role::where('system_name', 'admin')->update(['external_auth_id' => 'GG-DevOps-Admins']);
 
         $bookRepo = app(\BookStack\Entities\Repos\BookRepo::class);
         $pageRepo = app(\BookStack\Entities\Repos\PageRepo::class);
@@ -294,7 +320,7 @@
       changed_when: false
 
     # =========================================================================
-    # 7. Observability: Prometheus + Grafana (https://monitoring.devopsclub.io)
+    # 7. Observability: Prometheus + Grafana (https://grafana.corp.devopsclub.io)
     # =========================================================================
     - name: Add prometheus-community Helm repository
       ansible.builtin.shell: |
@@ -302,7 +328,7 @@
         helm repo update
       changed_when: false
 
-    - name: "Install kube-prometheus-stack (Grafana at monitoring.devopsclub.io)"
+    - name: "Install kube-prometheus-stack (Grafana at grafana.corp.devopsclub.io with AD/LDAP)"
       no_log: true
       ansible.builtin.shell: |
         helm upgrade --install kube-prometheus-stack prometheus-community/kube-prometheus-stack \
@@ -312,13 +338,52 @@
           adminPassword: "{{ seaweedfs_s3_secret_key }}"
           grafana.ini:
             auth.anonymous:
+              enabled: false
+            auth.ldap:
               enabled: true
-              org_role: Viewer
+              config_file: /etc/grafana/ldap.toml
+              allow_sign_up: true
+          ldap:
+            enabled: true
+            config: |
+              [[servers]]
+              host = "192.168.1.40"
+              port = 389
+              use_ssl = false
+              start_tls = false
+              bind_dn = "CN=svc-k8s-ldap,OU=ServiceAccounts,OU=DevOps,DC=corp,DC=devopsclub,DC=io"
+              bind_password = '{{ seaweedfs_s3_secret_key }}!'
+              search_filter = "(|(sAMAccountName=%s)(userPrincipalName=%s))"
+              search_base_dns = ["DC=corp,DC=devopsclub,DC=io"]
+
+              [servers.attributes]
+              name = "givenName"
+              surname = "sn"
+              username = "sAMAccountName"
+              member_of = "memberOf"
+              email = "userPrincipalName"
+
+              [[servers.group_mappings]]
+              group_dn = "CN=GG-DevOps-Admins,OU=Groups,OU=DevOps,DC=corp,DC=devopsclub,DC=io"
+              org_role = "Admin"
+              grafana_admin = true
+
+              [[servers.group_mappings]]
+              group_dn = "*"
+              org_role = "Viewer"
           ingress:
             enabled: true
             ingressClassName: nginx
+            annotations:
+              nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
             hosts:
-              - monitoring.devopsclub.io
+              - monitoring.corp.devopsclub.io
+              - grafana.corp.devopsclub.io
+            tls:
+              - secretName: corp-wildcard-tls
+                hosts:
+                  - monitoring.corp.devopsclub.io
+                  - grafana.corp.devopsclub.io
         prometheus:
           prometheusSpec:
             retention: 7d

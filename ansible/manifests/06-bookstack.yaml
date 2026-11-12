@@ -146,6 +146,35 @@ spec:
                   key: db-password
             - name: DB_DATABASE
               value: "bookstackapp"
+            - name: AUTH_METHOD
+              value: "ldap"
+            - name: LDAP_SERVER
+              value: "ldap://192.168.1.40:389"
+            - name: LDAP_BASE_DN
+              value: "DC=corp,DC=devopsclub,DC=io"
+            - name: LDAP_DN
+              value: "CN=svc-k8s-ldap,OU=ServiceAccounts,OU=DevOps,DC=corp,DC=devopsclub,DC=io"
+            - name: LDAP_PASS
+              valueFrom:
+                secretKeyRef:
+                  name: bookstack-secrets
+                  key: ldap-bind-password
+            - name: LDAP_USER_FILTER
+              value: "(&(sAMAccountName=${user}))"
+            - name: LDAP_VERSION
+              value: "3"
+            - name: LDAP_ID_ATTRIBUTE
+              value: "BIN;objectGUID"
+            - name: LDAP_EMAIL_ATTRIBUTE
+              value: "userPrincipalName"
+            - name: LDAP_DISPLAY_NAME_ATTRIBUTE
+              value: "cn"
+            - name: LDAP_USER_TO_GROUPS
+              value: "true"
+            - name: LDAP_GROUP_ATTRIBUTE
+              value: "memberOf"
+            - name: LDAP_REMOVE_FROM_GROUPS
+              value: "true"
           ports:
             - containerPort: 80
           volumeMounts:

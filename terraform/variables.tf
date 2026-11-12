@@ -173,16 +173,11 @@ variable "cloudflare_domain" {
 }
 
 variable "poc_subdomains" {
-  description = "Subdomínios das aplicações de Prova de Conceito (PoC) roteados via Cloudflare Tunnel para o Ingress Controller"
+  description = "Subdomínios públicos das aplicações roteados via Cloudflare Tunnel (ferramentas administrativas operam exclusivamente em *.corp.devopsclub.io)"
   type        = list(string)
   default = [
-    "harbor",     # Harbor (Enterprise Container Registry & Security Scanner)
-    "books",      # Calibre-Web
-    "dash",       # Dashy
-    "status",     # Uptime Kuma
-    "pdf",        # Stirling-PDF / BentoPDF
-    "wiki",       # BookStack
-    "monitoring"  # Grafana / Prometheus
+    "books",      # Calibre-Web (Biblioteca Pública)
+    "wiki"        # BookStack (Documentação Pública)
   ]
 }
 

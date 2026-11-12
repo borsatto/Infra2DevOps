@@ -1,20 +1,24 @@
 # ============================================================================
 # Harbor Enterprise Container Registry & Security Scanner (Helm Values)
-# Endpoint: https://harbor.devopsclub.io
+# Endpoint Corporativo: https://harbor.corp.devopsclub.io
 # ============================================================================
 expose:
   type: ingress
   tls:
-    enabled: false
+    enabled: true
+    certSource: secret
+    secret:
+      secretName: "corp-wildcard-tls"
   ingress:
     hosts:
-      core: harbor.devopsclub.io
+      core: harbor.corp.devopsclub.io
     className: nginx
     annotations:
       ingress.kubernetes.io/proxy-body-size: "0"
       nginx.ingress.kubernetes.io/proxy-body-size: "0"
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 
-externalURL: https://harbor.devopsclub.io
+externalURL: https://harbor.corp.devopsclub.io
 
 persistence:
   enabled: true

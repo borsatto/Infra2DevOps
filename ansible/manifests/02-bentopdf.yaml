@@ -68,10 +68,16 @@ kind: Ingress
 metadata:
   name: bentopdf
   namespace: bentopdf
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - pdf.corp.devopsclub.io
+      secretName: corp-wildcard-tls
   rules:
-    - host: pdf.devopsclub.io
+    - host: pdf.corp.devopsclub.io
       http:
         paths:
           - path: /

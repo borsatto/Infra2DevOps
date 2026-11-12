@@ -27,35 +27,35 @@ data:
         icon: fas fa-cubes
         items:
           - title: Harbor Container Registry
-            description: Enterprise OCI Registry & Vulnerability Scanner (Trivy)
+            description: Enterprise OCI Registry & Vulnerability Scanner (Trivy) — Perímetro Interno (AD/LDAP)
             icon: fas fa-anchor
-            url: https://harbor.devopsclub.io
+            url: https://harbor.corp.devopsclub.io
             target: newtab
           - title: BookStack Wiki
-            description: Portal de Documentação de Arquitetura, Runbooks e DR
+            description: Portal de Documentação de Arquitetura, Runbooks e DR (Público + AD/LDAP)
             icon: fas fa-book
             url: https://wiki.devopsclub.io
             target: newtab
           - title: Grafana & Prometheus
-            description: Observabilidade Cloud Native (kube-prometheus-stack)
+            description: Observabilidade Cloud Native (kube-prometheus-stack) — Perímetro Interno (AD/LDAP)
             icon: fas fa-chart-line
-            url: https://monitoring.devopsclub.io
+            url: https://grafana.corp.devopsclub.io
             target: newtab
           - title: Uptime Kuma
-            description: Monitoramento de Disponibilidade dos Endpoints PoC
+            description: Monitoramento de Disponibilidade dos Endpoints PoC — Perímetro Interno
             icon: fas fa-heartbeat
-            url: https://status.devopsclub.io
+            url: https://status.corp.devopsclub.io
             target: newtab
       - name: Aplicações & Utilitários Self-Hosted
         icon: fas fa-layer-group
         items:
           - title: BentoPDF Toolkit
-            description: Ferramentas PDF Client-Side Stateless (Deployment + HPA)
+            description: Ferramentas PDF Client-Side Stateless (Deployment + HPA) — Perímetro Interno
             icon: fas fa-file-pdf
-            url: https://pdf.devopsclub.io
+            url: https://pdf.corp.devopsclub.io
             target: newtab
           - title: Calibre-Web Library
-            description: Biblioteca de E-books com Clássicos em Domínio Público
+            description: Biblioteca de E-books com Clássicos em Domínio Público (Perímetro Público)
             icon: fas fa-book-open
             url: https://books.devopsclub.io
             target: newtab
@@ -126,10 +126,16 @@ kind: Ingress
 metadata:
   name: dashy
   namespace: dashy
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - dash.corp.devopsclub.io
+      secretName: corp-wildcard-tls
   rules:
-    - host: dash.devopsclub.io
+    - host: dash.corp.devopsclub.io
       http:
         paths:
           - path: /

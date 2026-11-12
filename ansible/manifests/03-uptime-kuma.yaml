@@ -70,10 +70,16 @@ kind: Ingress
 metadata:
   name: uptime-kuma
   namespace: uptime-kuma
+  annotations:
+    nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
 spec:
   ingressClassName: nginx
+  tls:
+    - hosts:
+        - status.corp.devopsclub.io
+      secretName: corp-wildcard-tls
   rules:
-    - host: status.devopsclub.io
+    - host: status.corp.devopsclub.io
       http:
         paths:
           - path: /

@@ -39,6 +39,7 @@ Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsat
 |  • Registry: Harbor Enterprise Registry (devops/*) + Trivy vulnerability scanner  |
 |  • Resilience: Velero + Kopia deduplication engine (tested with chaos engineering)|
 |  • Edge: Cloudflare Zero Trust Tunnel for public endpoints (wiki, books)          |
+|  • Corp Intranet: Split-Horizon (*.corp.devopsclub.io) + Corporate PKI + AD LDAP  |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -73,6 +74,11 @@ Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsat
 ### 6. Verified Disaster Recovery
 - Continuous backups using **Velero** with the **Kopia** content-addressable deduplication engine.
 - Validated via deliberate destruction (*Chaos Engineering*): full namespace deletions of stateful applications (relational database + persistent data) restored in under 60 seconds with 100% data integrity.
+
+### 7. Corporate Perimeter, Internal PKI & Active Directory Identity (LDAP/RBAC)
+- **Dual-Perimeter Segregation:** Public workloads (`wiki`, `books`) remain exposed via Cloudflare Zero Trust Tunnel, while internal engineering control planes (`harbor`, `grafana`, `dash`, `status`, `pdf`) operate exclusively on the corporate intranet zone (`*.corp.devopsclub.io`).
+- **CoreDNS Conditional Forwarding & Corporate PKI:** Cluster pods resolve internal corporate domains directly against the Active Directory DNS server (`192.168.1.40`), while internal Ingresses enforce HTTPS with a wildcard certificate signed by the corporate Enterprise Root CA (`corp-CORPADS01-CA`).
+- **Unified Identity & Group RBAC:** Centralized Active Directory LDAP authentication across Harbor, Grafana, and BookStack, mapping the `GG-DevOps-Admins` security group directly to administrative privileges.
 
 ---
 
@@ -157,7 +163,7 @@ Browse the codebase as it was at each specific architectural milestone:
 | [`v0.4.0-ep04`](https://github.com/borsatto/Infra2DevOps/releases/tag/v0.4.0-ep04) | **Ep 04: Storage Architecture & Core Workloads** | Proxmox CSI block storage, SeaweedFS S3 object storage, production app deployment |
 | [`v0.5.0-ep05`](https://github.com/borsatto/Infra2DevOps/releases/tag/v0.5.0-ep05) | **Ep 05: Disaster Recovery & Chaos Engineering** | Velero with Kopia deduplication on S3, validated with live namespace deletion drill |
 | [`v1.0.0-ep06`](https://github.com/borsatto/Infra2DevOps/releases/tag/v1.0.0-ep06) | **Ep 06: Harbor Registry & Supply Chain** | Sovereign container registry, local image mirroring, Trivy CVE scanning |
-| `v1.1.0-ep07` *(In Progress)* | **Ep 07: Active Directory & Split-Horizon** | Corporate perimeter, Windows AD DNS, unified LDAP/SSO authentication |
+| [`v1.1.0-ep07`](https://github.com/borsatto/Infra2DevOps/releases/tag/v1.1.0-ep07) | **Ep 07: Corporate Perimeter, PKI & AD Identity** | Dual-perimeter (`*.corp.devopsclub.io`), CoreDNS forwarding, corporate CA TLS, unified LDAP/RBAC |
 | `v1.2.0-ep08` *(Upcoming)* | **Ep 08: GitOps with ArgoCD** | Declarative continuous delivery from Git to Kubernetes cluster |
 
 To switch your local workspace to a specific milestone:
