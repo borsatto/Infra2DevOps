@@ -9,7 +9,7 @@
 
 A complete, production-grade infrastructure project documenting the end-to-end transformation of an enterprise physical server (**Dell PowerEdge R630**) into a sovereign, highly available **Kubernetes platform** with automated disaster recovery, on-premises object storage, private container registry, and a secured software supply chain.
 
-Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsatto)** &bull; **[DevOpsClub.io](https://devopsclub.io)**.
+Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsatto)** &bull; **[blog.devopsclub.io](https://blog.devopsclub.io)**.
 
 ---
 
@@ -147,7 +147,7 @@ kubectl apply -f ansible/manifests/
 **André Borsatto** has worked in infrastructure, networking, and systems engineering for over 25 years. This repository represents real, field-tested configurations built to bridge physical bare-metal hardware with modern cloud-native engineering.
 
 - **LinkedIn:** [linkedin.com/in/borsatto](https://www.linkedin.com/in/borsatto)
-- **Blog & Lab Notes:** [devopsclub.io](https://devopsclub.io)
+- **Blog & Lab Notes:** [blog.devopsclub.io](https://blog.devopsclub.io)
 
 ---
 
