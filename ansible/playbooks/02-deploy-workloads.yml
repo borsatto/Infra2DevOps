@@ -54,6 +54,55 @@
       ansible.builtin.command: kubectl apply -f /home/core/manifests/03-uptime-kuma.yaml
       changed_when: false
 
+    - name: Wait for Uptime Kuma to reach Ready state
+      ansible.builtin.command: >
+        kubectl rollout status deployment/uptime-kuma -n uptime-kuma --timeout=300s
+      changed_when: false
+
+    - name: Seed Uptime Kuma with 8 HTTPS monitors (Corporate & Public perimeters)
+      ansible.builtin.shell: |
+        set -e
+        POD=$(kubectl get pod -n uptime-kuma -l app=uptime-kuma -o jsonpath='{.items[0].metadata.name}')
+        for i in $(seq 1 30); do
+          if kubectl exec -n uptime-kuma "$POD" -- test -f /app/data/kuma.db; then
+            break
+          fi
+          sleep 2
+        done
+        kubectl exec -i -n uptime-kuma "$POD" -- node --experimental-sqlite - << 'JSEOF'
+        const { DatabaseSync } = require('node:sqlite');
+        const db = new DatabaseSync('/app/data/kuma.db');
+        const user = db.prepare('SELECT id FROM user LIMIT 1').get();
+        if (user) {
+          const count = db.prepare('SELECT COUNT(*) as c FROM monitor').get().c;
+          if (count === 0) {
+            const monitors = [
+              ['01. Dashy Portal (Corp)', 'https://dash.corp.devopsclub.io'],
+              ['02. ArgoCD GitOps (Corp)', 'https://argocd.corp.devopsclub.io'],
+              ['03. Harbor Registry (Corp)', 'https://harbor.corp.devopsclub.io'],
+              ['04. Grafana Observability (Corp)', 'https://grafana.corp.devopsclub.io'],
+              ['05. BentoPDF Utility (Corp)', 'https://pdf.corp.devopsclub.io'],
+              ['06. Uptime Kuma Status (Corp)', 'https://status.corp.devopsclub.io'],
+              ['07. BookStack Wiki (Public Edge)', 'https://wiki.devopsclub.io'],
+              ['08. Calibre-Web Library (Public Edge)', 'https://books.devopsclub.io'],
+            ];
+            const stmt = db.prepare(`
+              INSERT INTO monitor (
+                name, active, user_id, interval, url, type, maxretries,
+                retry_interval, method, ignore_tls, accepted_statuscodes_json, conditions
+              ) VALUES (?, 1, ?, 60, ?, 'http', 3, 60, 'GET', 1, '["200-299","300-399"]', '[]')
+            `);
+            for (const [name, url] of monitors) {
+              stmt.run(name, user.id, url);
+            }
+          }
+        }
+        db.close();
+        JSEOF
+        kubectl rollout restart deployment/uptime-kuma -n uptime-kuma
+        kubectl rollout status deployment/uptime-kuma -n uptime-kuma --timeout=180s
+      changed_when: false
+
     # =========================================================================
     # 4. Harbor (Enterprise Container Registry & Security Scanner at harbor.corp.devopsclub.io)
     # =========================================================================
@@ -396,3 +445,32 @@
                     requests:
                       storage: 20Gi
         EOF
+
+    # =========================================================================
+    # 8. ArgoCD GitOps Engine (https://argocd.corp.devopsclub.io)
+    # =========================================================================
+    - name: Deploy corporate CA Trust DaemonSet across all Flatcar nodes
+      ansible.builtin.command: kubectl apply -f /home/core/manifests/00-corp-node-trust.yaml
+      changed_when: false
+
+    - name: Add Argo Helm repository
+      ansible.builtin.shell: |
+        helm repo add argo https://argoproj.github.io/argo-helm --force-update
+        helm repo update
+      changed_when: false
+
+    - name: "Install ArgoCD with Dex Active Directory LDAP and Corporate PKI (argocd.corp.devopsclub.io)"
+      no_log: true
+      ansible.builtin.shell: |
+        kubectl create namespace argocd --dry-run=client -o yaml | kubectl apply -f -
+        kubectl create secret generic argocd-ldap-secret -n argocd \
+          --from-literal=ldap-bind-password='{{ seaweedfs_s3_secret_key }}!' \
+          --dry-run=client -o yaml | kubectl apply -f -
+        kubectl label secret argocd-ldap-secret -n argocd app.kubernetes.io/part-of=argocd --overwrite
+        helm upgrade --install argocd argo/argo-cd \
+          --namespace argocd \
+          --wait --timeout 10m \
+          -f /home/core/manifests/08-argocd-values.yaml
+        kubectl apply -f /home/core/manifests/07-argocd-applications.yaml
+      changed_when: false
+

@@ -1,0 +1,109 @@
+# ============================================================================
+# ArgoCD Declarative GitOps Applications (Single Source of Truth: GitLab)
+# Endpoint: https://argocd.corp.devopsclub.io
+# ============================================================================
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: dashy
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@gitlab.vtechlabs.com.br:4222/andre/infra2devops.git
+    targetRevision: main
+    path: ansible/manifests
+    directory:
+      include: "01-dashy.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: dashy
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bentopdf
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@gitlab.vtechlabs.com.br:4222/andre/infra2devops.git
+    targetRevision: main
+    path: ansible/manifests
+    directory:
+      include: "02-bentopdf.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bentopdf
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: uptime-kuma
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@gitlab.vtechlabs.com.br:4222/andre/infra2devops.git
+    targetRevision: main
+    path: ansible/manifests
+    directory:
+      include: "03-uptime-kuma.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: uptime-kuma
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: calibre-web
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@gitlab.vtechlabs.com.br:4222/andre/infra2devops.git
+    targetRevision: main
+    path: ansible/manifests
+    directory:
+      include: "05-calibre-web.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: calibre-web
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+---
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: bookstack
+  namespace: argocd
+spec:
+  project: default
+  source:
+    repoURL: ssh://git@gitlab.vtechlabs.com.br:4222/andre/infra2devops.git
+    targetRevision: main
+    path: ansible/manifests
+    directory:
+      include: "06-bookstack.yaml"
+  destination:
+    server: https://kubernetes.default.svc
+    namespace: bookstack
+  syncPolicy:
+    automated:
+      prune: true
+      selfHeal: true
+

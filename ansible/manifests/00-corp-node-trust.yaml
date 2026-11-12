@@ -1,0 +1,60 @@
+# ============================================================================
+# DaemonSet de Confiança PKI Corporativa nos Nós Flatcar Container Linux
+# Injeta a Enterprise Root CA (corp-CORPADS01-CA.crt) e resolução LAN do Harbor
+# em todos os nós (Control Planes e Workers) e recarrega o containerd.
+# ============================================================================
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: corp-node-trust
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: corp-node-trust
+  template:
+    metadata:
+      labels:
+        app: corp-node-trust
+    spec:
+      hostNetwork: true
+      hostPID: true
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: setup-trust
+          image: busybox:1.36
+          securityContext:
+            privileged: true
+          command:
+            - sh
+            - -c
+            - |
+              cp /ca/corp-CORPADS01-CA.crt /host-etc/ssl/certs/corp-CORPADS01-CA.crt
+              chroot /host update-ca-certificates
+              if ! grep -q "harbor.corp.devopsclub.io" /host-etc/hosts; then
+                echo "192.168.1.200 harbor.corp.devopsclub.io harbor.devopsclub.io" >> /host-etc/hosts
+              fi
+              chroot /host systemctl restart containerd
+              echo "Corporate PKI & containerd reloaded on $(hostname)"
+          volumeMounts:
+            - name: host-etc
+              mountPath: /host-etc
+            - name: host-root
+              mountPath: /host
+            - name: ca-vol
+              mountPath: /ca
+      containers:
+        - name: pause
+          image: registry.k8s.io/pause:3.9
+      volumes:
+        - name: host-etc
+          hostPath:
+            path: /etc
+        - name: host-root
+          hostPath:
+            path: /
+        - name: ca-vol
+          configMap:
+            name: corp-root-ca
+

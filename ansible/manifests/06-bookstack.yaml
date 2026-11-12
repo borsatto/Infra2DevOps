@@ -48,7 +48,7 @@ spec:
     spec:
       containers:
         - name: mariadb
-          image: harbor.devopsclub.io/devops/mariadb:latest
+          image: harbor.corp.devopsclub.io/devops/mariadb:latest
           env:
             - name: PUID
               value: "1000"
@@ -118,7 +118,7 @@ spec:
     spec:
       containers:
         - name: bookstack
-          image: harbor.devopsclub.io/devops/bookstack:latest
+          image: harbor.corp.devopsclub.io/devops/bookstack:26.09.3
           env:
             - name: PUID
               value: "1000"

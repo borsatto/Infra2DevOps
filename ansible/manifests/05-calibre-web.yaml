@@ -35,7 +35,7 @@ spec:
     spec:
       containers:
         - name: calibre-web
-          image: harbor.devopsclub.io/devops/calibre-web:latest
+          image: harbor.corp.devopsclub.io/devops/calibre-web:0.6.27
           env:
             - name: PUID
               value: "1000"

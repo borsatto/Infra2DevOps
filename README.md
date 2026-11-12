@@ -40,6 +40,7 @@ Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsat
 |  • Resilience: Velero + Kopia deduplication engine (tested with chaos engineering)|
 |  • Edge: Cloudflare Zero Trust Tunnel for public endpoints (wiki, books)          |
 |  • Corp Intranet: Split-Horizon (*.corp.devopsclub.io) + Corporate PKI + AD LDAP  |
+|  • GitOps: ArgoCD declarative continuous delivery (Single Source of Truth in Git) |
 +-----------------------------------------------------------------------------------+
 ```
 
@@ -80,6 +81,11 @@ Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsat
 - **CoreDNS Conditional Forwarding & Corporate PKI:** Cluster pods resolve internal corporate domains directly against the Active Directory DNS server (`192.168.1.40`), while internal Ingresses enforce HTTPS with a wildcard certificate signed by the corporate Enterprise Root CA (`corp-CORPADS01-CA`).
 - **Unified Identity & Group RBAC:** Centralized Active Directory LDAP authentication across Harbor, Grafana, and BookStack, mapping the `GG-DevOps-Admins` security group directly to administrative privileges.
 
+### 8. Declarative GitOps & Lifecycle Management (ArgoCD)
+- **Single Source of Truth:** ArgoCD (`https://argocd.corp.devopsclub.io`) continuously reconciles cluster state against the Git repository using a least-privilege Read-Only Ed25519 Deploy Key (`prune: true`, `selfHeal: true`).
+- **Node-Level PKI Trust DaemonSet:** Declarative `corp-node-trust` DaemonSet (`00-corp-node-trust.yaml`) distributes the corporate Root CA across all immutable Flatcar nodes and reloads `containerd` for verified HTTPS image pulls.
+- **Zero-Touch Upgrades:** Application lifecycle updates (`Uptime Kuma v2.5.11`, `BookStack v26.09.3`, `Calibre-Web v0.6.27`) are executed purely via Harbor supply-chain mirroring and `git push`, retiring manual `kubectl apply`.
+
 ---
 
 ## Repository Structure
@@ -93,13 +99,16 @@ Created and maintained by **[André Borsatto](https://www.linkedin.com/in/borsat
 │   ├── outputs.tf              # Target outputs and connection strings
 │   └── terraform.tfvars.example# Sanitized parameter template
 ├── ansible/
-│   └── manifests/              # Production Kubernetes manifests
-│       ├── 01-dashy.yaml       # Navigation dashboard
-│       ├── 02-bentopdf.yaml    # PDF tooling suite
-│       ├── 03-uptime-kuma.yaml # Health monitoring & status page
-│       ├── 04-harbor-values.yaml # Helm values for Harbor on SeaweedFS S3
-│       ├── 05-calibre-web.yaml # Technical library management
-│       └── 06-bookstack.yaml   # Documentation hub (MariaDB + App)
+│   └── manifests/              # Production Kubernetes & GitOps manifests
+│       ├── 00-corp-node-trust.yaml      # DaemonSet: Corporate Root CA trust on Flatcar nodes
+│       ├── 01-dashy.yaml                # Navigation dashboard (dash.corp.devopsclub.io)
+│       ├── 02-bentopdf.yaml             # PDF tooling suite + HPA (pdf.corp.devopsclub.io)
+│       ├── 03-uptime-kuma.yaml          # Availability monitoring v2.5.11 (status.corp.devopsclub.io)
+│       ├── 04-harbor-values.yaml        # Helm values for Harbor on SeaweedFS S3
+│       ├── 05-calibre-web.yaml          # Technical library v0.6.27 (books.devopsclub.io)
+│       ├── 06-bookstack.yaml            # Documentation hub v26.09.3 + AD LDAP (wiki.devopsclub.io)
+│       ├── 07-argocd-applications.yaml  # Declarative ArgoCD GitOps Applications
+│       └── 08-argocd-values.yaml        # Helm values for ArgoCD + Dex AD LDAP
 └── README.md
 ```
 
@@ -164,7 +173,7 @@ Browse the codebase as it was at each specific architectural milestone:
 | [`v0.5.0-ep05`](https://github.com/borsatto/Infra2DevOps/releases/tag/v0.5.0-ep05) | **Ep 05: Disaster Recovery & Chaos Engineering** | Velero with Kopia deduplication on S3, validated with live namespace deletion drill |
 | [`v1.0.0-ep06`](https://github.com/borsatto/Infra2DevOps/releases/tag/v1.0.0-ep06) | **Ep 06: Harbor Registry & Supply Chain** | Sovereign container registry, local image mirroring, Trivy CVE scanning |
 | [`v1.1.0-ep07`](https://github.com/borsatto/Infra2DevOps/releases/tag/v1.1.0-ep07) | **Ep 07: Corporate Perimeter, PKI & AD Identity** | Dual-perimeter (`*.corp.devopsclub.io`), CoreDNS forwarding, corporate CA TLS, unified LDAP/RBAC |
-| `v1.2.0-ep08` *(Upcoming)* | **Ep 08: GitOps with ArgoCD** | Declarative continuous delivery from Git to Kubernetes cluster |
+| [`v1.2.0-ep08`](https://github.com/borsatto/Infra2DevOps/releases/tag/v1.2.0-ep08) | **Ep 08: Declarative GitOps with ArgoCD** | ArgoCD + Dex AD LDAP, node PKI trust DaemonSet, zero-touch upgrades (`Uptime Kuma v2.5.11`) |
 
 To switch your local workspace to a specific milestone:
 ```bash

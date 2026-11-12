@@ -1,0 +1,56 @@
+# ============================================================================
+# ArgoCD GitOps Engine (Helm Values — argo/argo-cd)
+# Endpoint Corporativo: https://argocd.corp.devopsclub.io
+# ============================================================================
+global:
+  domain: argocd.corp.devopsclub.io
+
+configs:
+  params:
+    server.insecure: true
+  cm:
+    url: https://argocd.corp.devopsclub.io
+    dex.config: |
+      connectors:
+        - type: ldap
+          name: Active Directory (corp.devopsclub.io)
+          id: ad
+          config:
+            host: 192.168.1.40:389
+            insecureNoSSL: true
+            bindDN: CN=svc-k8s-ldap,OU=ServiceAccounts,OU=DevOps,DC=corp,DC=devopsclub,DC=io
+            bindPW: $dex.ldap.bindPW
+            usernamePrompt: Usuário AD (sAMAccountName)
+            userSearch:
+              baseDN: DC=corp,DC=devopsclub,DC=io
+              filter: "(objectClass=person)"
+              username: sAMAccountName
+              idAttr: DN
+              emailAttr: userPrincipalName
+              nameAttr: cn
+            groupSearch:
+              baseDN: OU=Groups,OU=DevOps,DC=corp,DC=devopsclub,DC=io
+              filter: "(objectClass=group)"
+              userMatchers:
+                - userAttr: DN
+                  groupAttr: member
+              nameAttr: cn
+  rbac:
+    policy.default: role:readonly
+    policy.csv: |
+      g, GG-DevOps-Admins, role:admin
+
+server:
+  ingress:
+    enabled: true
+    ingressClassName: nginx
+    annotations:
+      nginx.ingress.kubernetes.io/force-ssl-redirect: "true"
+      nginx.ingress.kubernetes.io/backend-protocol: "HTTP"
+    hosts:
+      - argocd.corp.devopsclub.io
+    tls:
+      - secretName: corp-wildcard-tls
+        hosts:
+          - argocd.corp.devopsclub.io
+

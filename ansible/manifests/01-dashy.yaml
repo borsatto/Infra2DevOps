@@ -26,6 +26,11 @@ data:
       - name: Plataforma & Engenharia DevOps
         icon: fas fa-cubes
         items:
+          - title: ArgoCD GitOps
+            description: Entrega Contínua Declarativa (GitOps) — Perímetro Interno (AD/LDAP)
+            icon: fas fa-code-branch
+            url: https://argocd.corp.devopsclub.io
+            target: newtab
           - title: Harbor Container Registry
             description: Enterprise OCI Registry & Vulnerability Scanner (Trivy) — Perímetro Interno (AD/LDAP)
             icon: fas fa-anchor
@@ -90,7 +95,7 @@ spec:
     spec:
       containers:
         - name: dashy
-          image: harbor.devopsclub.io/devops/dashy:latest
+          image: harbor.corp.devopsclub.io/devops/dashy:latest
           ports:
             - containerPort: 8080
           volumeMounts:
